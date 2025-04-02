@@ -4,12 +4,9 @@
 #include <wayland-server.h>
 
 struct my_compositor {
-  struct wl_resource *resource;
+  struct wl_global *global;
   struct my_state *state;
 };
-
-void setup_compositor_global(struct wl_display *display,
-                             struct my_state *state);
 
 struct my_output {
   struct wl_resource *resource;
@@ -22,6 +19,26 @@ struct my_state {
   struct my_compositor *compositor;
   int test;
 };
+
+void setup_compositor_global(struct wl_display *display,
+                             struct my_state *state) {
+  struct my_compositor *compositor = calloc(1, sizeof(struct my_compositor));
+  if (!compositor) {
+    fprintf(stderr, "Allocation of global compositor failed");
+    return;
+  }
+
+  compositor->state = state;
+  state->compositor = compositor;
+  compositor->global =
+      wl_global_create(display, &wl_compositor_interface, 4, compositor, NULL);
+  if (!compositor->global) {
+    fprintf(stderr, "Failed to create resource from global compositor");
+    free(compositor);
+    state->compositor = NULL;
+    return;
+  }
+}
 
 // Helper functions for list management (e.g., add and remove nodes)
 void add_to_list(struct my_output **head, struct my_output *new_output) {
@@ -111,7 +128,16 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  struct my_state state = {.client_outputs = NULL, .test = 1};
+  struct my_state state = {
+      .client_outputs = NULL, .test = 1, .compositor = NULL};
+
+  setup_compositor_global(display, &state);
+
+  if (!state.compositor) {
+    fprintf(stderr, "Failed to create global compositor.");
+    wl_display_destroy(display);
+    return 1;
+  }
 
   wl_global_create(display, &wl_output_interface, 1, &state,
                    wl_output_handle_bind);
