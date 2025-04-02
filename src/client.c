@@ -1,11 +1,29 @@
 #include <stdio.h>
+#include <string.h>
 #include <wayland-client.h>
+
+struct our_state {
+  struct our_state *state;
+  struct wl_compositor *compositor;
+  struct my_output *next;
+};
 
 static void registry_handle_global(void *data, struct wl_registry *registry,
                                    uint32_t name, const char *interface,
                                    uint32_t version) {
-  printf("interface: '%s', version: '%d', name: '%d'\n", interface, version,
-         name);
+  // PRIMITIVE: Print out the available interfaces from server to bind to
+  // printf("interface: '%s', version: '%d', name: '%d'\n", interface, version,
+  //        name);
+
+  // Extracts state of an object client-side
+  struct our_state *state = data;
+  // If the interface from server matches the name of the global wl_compositor
+  if (strcmp(interface, wl_compositor_interface.name) == 0) {
+    // Object binds to wl_compositor, initializing a resource stored server-side
+    state->compositor =
+        wl_registry_bind(registry, name, &wl_compositor_interface, 4);
+    fprintf(stderr, "[+] Successfully binded to wl_compositor.\n");
+  }
 }
 
 static void registry_handle_global_remove(void *data,
@@ -18,6 +36,7 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 int main(int argc, char **argv) {
+  struct our_state state = {0};
   // Initialize display and registry
 
   // display: wire protocol
@@ -41,7 +60,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Failed to create Wayland registry.");
     return 1;
   }
-  wl_registry_add_listener(registry, &registry_listener, NULL);
+  wl_registry_add_listener(registry, &registry_listener, &state);
   wl_display_roundtrip(display);
   return 0;
 }

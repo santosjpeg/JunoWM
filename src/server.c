@@ -88,9 +88,9 @@ static void wl_output_handle_bind(struct wl_client *client, void *data,
 
   // TODO: Send geometry event, et al.
 
-  // wl_output_send_geometry(resource, 0, 0, 1920, 1080,
-  //                         WL_OUTPUT_SUBPIXEL_UNKNOWN, "Foobar, Inc.",
-  //                         "Foobar Monitor", WL_OUTPUT_TRANSFORM_NORMAL);
+  wl_output_send_geometry(resource, 0, 0, 1920, 1080,
+                          WL_OUTPUT_SUBPIXEL_UNKNOWN, "Foobar, Inc.",
+                          "Foobar Monitor", WL_OUTPUT_TRANSFORM_NORMAL);
 
   // Result: Another global that is a means of a client to interact with
   // wl_display (global interface)
@@ -115,6 +115,8 @@ int main(int argc, char **argv) {
 
   wl_global_create(display, &wl_output_interface, 1, &state,
                    wl_output_handle_bind);
+  // wl_global-create(display, &wl_compositor_interface, 1, &state,
+  // wl_compositor_handle_bind);
 
   fprintf(stderr, "Running Wayland display on socket: %s\n", socket);
   wl_display_run(display);
