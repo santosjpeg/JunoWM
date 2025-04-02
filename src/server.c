@@ -1,8 +1,16 @@
+// #include "include/compositor.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <wayland-server.h>
 
-// Group of globals are structured in a Linked List
+struct my_compositor {
+  struct wl_resource *resource;
+  struct my_state *state;
+};
+
+void setup_compositor_global(struct wl_display *display,
+                             struct my_state *state);
+
 struct my_output {
   struct wl_resource *resource;
   struct my_state *state;
@@ -11,6 +19,7 @@ struct my_output {
 
 struct my_state {
   struct my_output *client_outputs;
+  struct my_compositor *compositor;
   int test;
 };
 
@@ -60,17 +69,14 @@ static const struct wl_output_interface wl_output_implementation = {
 // OUTPUT: Registers new resource as a global
 static void wl_output_handle_bind(struct wl_client *client, void *data,
                                   uint32_t version, uint32_t id) {
-  // snapshot of compositor when wl_global_create() was called
   struct my_state *state = data;
 
-  // Tracks client's interaction with wl_output
   struct my_output *client_output = calloc(1, sizeof(struct my_output));
   if (!client_output) {
     fprintf(stderr, "Error: Failed to allocate memory for my_output.\n");
     return;
   }
 
-  // Initializes and adds resource to globals
   struct wl_resource *resource =
       wl_resource_create(client, &wl_output_interface, version, id);
   if (!resource) {
@@ -86,15 +92,9 @@ static void wl_output_handle_bind(struct wl_client *client, void *data,
   client_output->resource = resource;
   client_output->state = state;
 
-  // TODO: Send geometry event, et al.
-
-  wl_output_send_geometry(resource, 0, 0, 1920, 1080,
-                          WL_OUTPUT_SUBPIXEL_UNKNOWN, "Foobar, Inc.",
-                          "Foobar Monitor", WL_OUTPUT_TRANSFORM_NORMAL);
-
-  // Result: Another global that is a means of a client to interact with
-  // wl_display (global interface)
   add_to_list(&state->client_outputs, client_output);
+
+  // TODO: Send geometry event, et al.
 }
 
 int main(int argc, char **argv) {
@@ -115,8 +115,6 @@ int main(int argc, char **argv) {
 
   wl_global_create(display, &wl_output_interface, 1, &state,
                    wl_output_handle_bind);
-  // wl_global-create(display, &wl_compositor_interface, 1, &state,
-  // wl_compositor_handle_bind);
 
   fprintf(stderr, "Running Wayland display on socket: %s\n", socket);
   wl_display_run(display);
