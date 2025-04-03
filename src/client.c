@@ -53,26 +53,71 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Failed to create Wayland registry.");
     return 1;
   }
-
   wl_registry_add_listener(registry, &registry_listener, &state);
+  wl_display_roundtrip(display);
+
+  if (!state.compositor) {
+    fprintf(stderr, "[-] Failed to bind to compositor\n");
+    return 1;
+  }
+  struct wl_surface *surface = wl_compositor_create_surface(state.compositor);
 
   // Initialize shared memory pool after binding to wl_shm interface
-
   const int WIDTH = 1920;
   const int HEIGHT = 1080;
-
   const int STRIDE = WIDTH * 4;
   const int SHM_POOL_SIZE = HEIGHT * STRIDE * 2;
 
   // Initialize and dynamically allocated size of shared memory file
   int fd = allocate_shm_file(SHM_POOL_SIZE);
+  if (fd < 0) {
+    fprintf(stderr, "[-] Failed to allocate shared memory file");
+    return 1;
+  }
+  fprintf(stderr, "[+] Successfully allocated shared memory file.\n");
+
   uint8_t *pool_data =
       mmap(NULL, SHM_POOL_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  struct wl_shm *shm = state.shm;
+  if (pool_data == MAP_FAILED) {
+    perror("[-] map failed");
+    close(fd);
+    return 1;
+  }
+  fprintf(stderr, "[+] Successfully allocated memory for pool\n");
+
+  if (!state.shm) {
+    fprintf(stderr, "[-] Failed to bind to wl_shm \n");
+    return 1;
+  }
 
   // Init wl_shm_pool object to be shared memory backing for buffer objects
-  struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, SHM_POOL_SIZE);
+  struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, fd, SHM_POOL_SIZE);
+  if (!pool) {
+    fprintf(stderr, "[-] Failed to create shm pool");
+    return 1;
+  }
 
+  fprintf(stderr, "[+] Successfully instantiated pool object\n");
+
+  int index = 0;
+  int offset = HEIGHT * STRIDE * index;
+  struct wl_buffer *buffer = wl_shm_pool_create_buffer(
+      pool, offset, WIDTH, HEIGHT, STRIDE, WL_SHM_FORMAT_XRGB8888);
+  if (!buffer) {
+    fprintf(stderr, "[-] Failed to create shm buffer");
+    return 1;
+  }
+  fprintf(stderr, "[+] Successfully created shm buffer\n");
+
+  // Writing images to newly initialized buffer - Draw white to the screen
+  uint32_t *pixels = (uint32_t *)&pool_data[offset];
+  memset(pixels, 0, WIDTH * HEIGHT * 4);
+
+  // Attaching buffer to state surface
+  wl_surface_attach(surface, buffer, 0, 0);
+  wl_surface_damage(surface, 0, 0, UINT32_MAX, UINT32_MAX);
+  wl_surface_commit(surface);
+  fprintf(stderr, "[+] Succesfully attached buffer to surface + commit\n");
   wl_display_roundtrip(display);
   return 0;
 }

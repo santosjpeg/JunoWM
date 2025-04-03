@@ -13,17 +13,17 @@
  * of the clock_gettime() function call.
  * @param buf: buffer storing suffix.
  */
-static void randname(char *buf) {
+void randname(char *buf) {
   struct timespec ts;
   clock_gettime(CLOCK_REALTIME, &ts);
-  long r = ts.tv_nsec ^ (getpid() * 2654435761);
+  long r = ts.tv_nsec;
   for (int i = 0; i < 6; ++i) {
     buf[i] = 'A' + (r & 15) + (r & 16) * 2;
     r >>= 5;
   }
 }
 
-static int create_shm_file(void) {
+int create_shm_file(void) {
   int retries = 100;
   do {
     char name[] = "/wl_shm-XXXXXX";
