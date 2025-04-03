@@ -83,7 +83,7 @@ static const struct wl_output_interface wl_output_implementation = {
 // @PARAM data -> pointing to my_state struct
 // @PARAM version -> Wayland protocol version
 // @PARAM id -> For newly created resource
-// OUTPUT: Registers new resource as a global
+// @RETURN Registers new resource as a global
 static void wl_output_handle_bind(struct wl_client *client, void *data,
                                   uint32_t version, uint32_t id) {
   struct my_state *state = data;
@@ -142,9 +142,8 @@ int main(int argc, char **argv) {
   wl_global_create(display, &wl_output_interface, 1, &state,
                    wl_output_handle_bind);
 
-  fprintf(stderr, "Running Wayland display on socket: %s\n", socket);
+  fprintf(stderr, "[+] Running Wayland display on socket: %s\n", socket);
   wl_display_run(display);
-
   wl_display_destroy(display);
   return EXIT_SUCCESS;
 }
