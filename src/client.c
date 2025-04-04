@@ -1,123 +1,183 @@
-#include "include/shm.h"
-#include <stdio.h>
+#define _POSIX_C_SOURCE 200112L
+#include "xdg-shell-client-protocol.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdbool.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <wayland-client-protocol.h>
+#include <time.h>
+#include <unistd.h>
 #include <wayland-client.h>
 
-struct our_state {
-  struct our_state *state;
-  struct wl_compositor *compositor;
-  struct wl_shm *shm;
-  struct my_output *next;
-};
-
-static void registry_handle_global(void *data, struct wl_registry *registry,
-                                   uint32_t name, const char *interface,
-                                   uint32_t version) {
-  struct our_state *state = data;
-  // If the interface from server matches the name of the global wl_compositor
-  if (strcmp(interface, wl_compositor_interface.name) == 0) {
-    // Object binds to wl_compositor, initializing a resource stored server-side
-    state->compositor =
-        wl_registry_bind(registry, name, &wl_compositor_interface, 4);
-    fprintf(stderr, "[+] Successfully binded to wl_compositor.\n");
-  }
-
-  // Finds shared memory and binds to it, creating resource server-side
-  if (strcmp(interface, wl_shm_interface.name) == 0) {
-    state->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
-    fprintf(stderr, "[+] Successfully binded to wl_shm.\n");
+/* Shared memory support code */
+static void randname(char *buf) {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  long r = ts.tv_nsec;
+  for (int i = 0; i < 6; ++i) {
+    buf[i] = 'A' + (r & 15) + (r & 16) * 2;
+    r >>= 5;
   }
 }
 
-static void registry_handle_global_remove(void *data,
-                                          struct wl_registry *registry,
-                                          uint32_t name) {}
+static int create_shm_file(void) {
+  int retries = 100;
+  do {
+    char name[] = "/wl_shm-XXXXXX";
+    randname(name + sizeof(name) - 7);
+    --retries;
+    int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
+    if (fd >= 0) {
+      shm_unlink(name);
+      return fd;
+    }
+  } while (retries > 0 && errno == EEXIST);
+  return -1;
+}
 
-static const struct wl_registry_listener registry_listener = {
-    .global = registry_handle_global,
-    .global_remove = registry_handle_global_remove,
+static int allocate_shm_file(size_t size) {
+  int fd = create_shm_file();
+  if (fd < 0)
+    return -1;
+  int ret;
+  do {
+    ret = ftruncate(fd, size);
+  } while (ret < 0 && errno == EINTR);
+  if (ret < 0) {
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+/* Wayland code */
+struct client_state {
+  /* Globals */
+  struct wl_display *wl_display;
+  struct wl_registry *wl_registry;
+  struct wl_shm *wl_shm;
+  struct wl_compositor *wl_compositor;
+  struct xdg_wm_base *xdg_wm_base;
+  /* Objects */
+  struct wl_surface *wl_surface;
+  struct xdg_surface *xdg_surface;
+  struct xdg_toplevel *xdg_toplevel;
 };
 
-int main(int argc, char **argv) {
-  struct our_state state = {0};
-  // Initialize display and registry
-  struct wl_display *display = wl_display_connect(NULL);
-  if (!display) {
-    fprintf(stderr, "Failed to create Wayland display.");
-    return 1;
-  }
-  struct wl_registry *registry = wl_display_get_registry(display);
-  if (!registry) {
-    fprintf(stderr, "Failed to create Wayland registry.");
-    return 1;
-  }
-  wl_registry_add_listener(registry, &registry_listener, &state);
-  wl_display_roundtrip(display);
+static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer) {
+  /* Sent by the compositor when it's no longer using this buffer */
+  wl_buffer_destroy(wl_buffer);
+}
 
-  if (!state.compositor) {
-    fprintf(stderr, "[-] Failed to bind to compositor\n");
-    return 1;
+static const struct wl_buffer_listener wl_buffer_listener = {
+    .release = wl_buffer_release,
+};
+
+static struct wl_buffer *draw_frame(struct client_state *state) {
+  const int width = 640, height = 480;
+  int stride = width * 4;
+  int size = stride * height;
+
+  int fd = allocate_shm_file(size);
+  if (fd == -1) {
+    return NULL;
   }
-  struct wl_surface *surface = wl_compositor_create_surface(state.compositor);
 
-  // Initialize shared memory pool after binding to wl_shm interface
-  const int WIDTH = 1920;
-  const int HEIGHT = 1080;
-  const int STRIDE = WIDTH * 4;
-  const int SHM_POOL_SIZE = HEIGHT * STRIDE * 2;
-
-  // Initialize and dynamically allocated size of shared memory file
-  int fd = allocate_shm_file(SHM_POOL_SIZE);
-  if (fd < 0) {
-    fprintf(stderr, "[-] Failed to allocate shared memory file");
-    return 1;
-  }
-  fprintf(stderr, "[+] Successfully allocated shared memory file.\n");
-
-  uint8_t *pool_data =
-      mmap(NULL, SHM_POOL_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  if (pool_data == MAP_FAILED) {
-    perror("[-] map failed");
+  uint32_t *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (data == MAP_FAILED) {
     close(fd);
-    return 1;
-  }
-  fprintf(stderr, "[+] Successfully allocated memory for pool\n");
-
-  if (!state.shm) {
-    fprintf(stderr, "[-] Failed to bind to wl_shm \n");
-    return 1;
+    return NULL;
   }
 
-  // Init wl_shm_pool object to be shared memory backing for buffer objects
-  struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, fd, SHM_POOL_SIZE);
-  if (!pool) {
-    fprintf(stderr, "[-] Failed to create shm pool");
-    return 1;
-  }
-
-  fprintf(stderr, "[+] Successfully instantiated pool object\n");
-
-  int index = 0;
-  int offset = HEIGHT * STRIDE * index;
+  struct wl_shm_pool *pool = wl_shm_create_pool(state->wl_shm, fd, size);
   struct wl_buffer *buffer = wl_shm_pool_create_buffer(
-      pool, offset, WIDTH, HEIGHT, STRIDE, WL_SHM_FORMAT_XRGB8888);
-  if (!buffer) {
-    fprintf(stderr, "[-] Failed to create shm buffer");
-    return 1;
+      pool, 0, width, height, stride, WL_SHM_FORMAT_XRGB8888);
+  wl_shm_pool_destroy(pool);
+  close(fd);
+
+  /* Draw checkerboxed background */
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      if ((x + y / 8 * 8) % 16 < 8)
+        data[y * width + x] = 0xFF666666;
+      else
+        data[y * width + x] = 0xFFEEEEEE;
+    }
   }
-  fprintf(stderr, "[+] Successfully created shm buffer\n");
 
-  // Writing images to newly initialized buffer - Draw white to the screen
-  uint32_t *pixels = (uint32_t *)&pool_data[offset];
-  memset(pixels, 0, WIDTH * HEIGHT * 4);
+  munmap(data, size);
+  wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
+  return buffer;
+}
 
-  // Attaching buffer to state surface
-  wl_surface_attach(surface, buffer, 0, 0);
-  wl_surface_damage(surface, 0, 0, UINT32_MAX, UINT32_MAX);
-  wl_surface_commit(surface);
-  fprintf(stderr, "[+] Succesfully attached buffer to surface + commit\n");
-  wl_display_roundtrip(display);
+static void xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
+                                  uint32_t serial) {
+  struct client_state *state = data;
+  xdg_surface_ack_configure(xdg_surface, serial);
+
+  struct wl_buffer *buffer = draw_frame(state);
+  wl_surface_attach(state->wl_surface, buffer, 0, 0);
+  wl_surface_commit(state->wl_surface);
+}
+
+static const struct xdg_surface_listener xdg_surface_listener = {
+    .configure = xdg_surface_configure,
+};
+
+static void xdg_wm_base_ping(void *data, struct xdg_wm_base *xdg_wm_base,
+                             uint32_t serial) {
+  xdg_wm_base_pong(xdg_wm_base, serial);
+}
+
+static const struct xdg_wm_base_listener xdg_wm_base_listener = {
+    .ping = xdg_wm_base_ping,
+};
+
+static void registry_global(void *data, struct wl_registry *wl_registry,
+                            uint32_t name, const char *interface,
+                            uint32_t version) {
+  struct client_state *state = data;
+  if (strcmp(interface, wl_shm_interface.name) == 0) {
+    state->wl_shm = wl_registry_bind(wl_registry, name, &wl_shm_interface, 1);
+  } else if (strcmp(interface, wl_compositor_interface.name) == 0) {
+    state->wl_compositor =
+        wl_registry_bind(wl_registry, name, &wl_compositor_interface, 4);
+  } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
+    state->xdg_wm_base =
+        wl_registry_bind(wl_registry, name, &xdg_wm_base_interface, 1);
+    xdg_wm_base_add_listener(state->xdg_wm_base, &xdg_wm_base_listener, state);
+  }
+}
+
+static void registry_global_remove(void *data, struct wl_registry *wl_registry,
+                                   uint32_t name) {
+  /* This space deliberately left blank */
+}
+
+static const struct wl_registry_listener wl_registry_listener = {
+    .global = registry_global,
+    .global_remove = registry_global_remove,
+};
+
+int main(int argc, char *argv[]) {
+  struct client_state state = {0};
+  state.wl_display = wl_display_connect(NULL);
+  state.wl_registry = wl_display_get_registry(state.wl_display);
+  wl_registry_add_listener(state.wl_registry, &wl_registry_listener, &state);
+  wl_display_roundtrip(state.wl_display);
+
+  state.wl_surface = wl_compositor_create_surface(state.wl_compositor);
+  state.xdg_surface =
+      xdg_wm_base_get_xdg_surface(state.xdg_wm_base, state.wl_surface);
+  xdg_surface_add_listener(state.xdg_surface, &xdg_surface_listener, &state);
+  state.xdg_toplevel = xdg_surface_get_toplevel(state.xdg_surface);
+  xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
+  wl_surface_commit(state.wl_surface);
+
+  while (wl_display_dispatch(state.wl_display)) {
+    /* This space deliberately left blank */
+  }
+
   return 0;
 }
