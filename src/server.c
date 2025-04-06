@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <bits/time.h>
 #include <getopt.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -53,11 +54,37 @@ struct jwm_output {
   struct wl_listener destroy;
 };
 
-static void output_frame(struct wl_listener *listener, void *data);
+static void output_frame(struct wl_listener *listener, void *data) {
+  struct jwm_output *output = wl_container_of(listener, output, frame);
+  struct wlr_scene *scene = output->server->scene;
 
-static void output_request_state(struct wl_listener *listener, void *data);
+  struct wlr_scene_output *scene_output =
+      wlr_scene_get_scene_output(scene, output->wlr_output);
 
-static void output_destroy(struct wl_listener *listener, void *data);
+  wlr_scene_output_commit(scene_output, NULL);
+
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  wlr_scene_output_send_frame_done(scene_output, &now);
+}
+
+static void output_request_state(struct wl_listener *listener, void *data) {
+  struct jwm_output *output = wl_container_of(listener, output, request_state);
+
+  const struct wlr_output_event_request_state *event = data;
+  wlr_output_commit_state(output->wlr_output, event->state);
+}
+
+static void output_destroy(struct wl_listener *listener, void *data) {
+  struct jwm_output *output = wl_container_of(listener, output, destroy);
+
+  wl_list_remove(&output->frame.link);
+  wl_list_remove(&output->request_state.link);
+  wl_list_remove(&output->destroy.link);
+  wl_list_remove(&output->link);
+
+  free(output);
+}
 
 static void server_new_output(struct wl_listener *listener, void *data) {
   fprintf(stderr, "[+] Running server_new_output\n");
