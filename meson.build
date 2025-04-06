@@ -1,33 +1,30 @@
 project('junowm','c')
 
 # Dependencies
-wayland_server = dependency('wayland-server')
-wayland_client = dependency('wayland-client')
 wayland_protocols = dependency('wayland-protocols')
 wlroots = dependency('wlroots-0.19')
-
+wayland_server = dependency('wayland-server')
 
 # Project args 
 add_project_arguments('-DWLR_USE_UNSTABLE', language: 'c')
 
 # Wayland protocol headers
-protocols_server_header = wayland_protocols.get_pkgconfig_variable('includedir')
+protocols_server_header = wayland_protocols.get_pkgconfig_variable('pkgdatadir')
 
-#include 
-inc = include_directories('include', protocols_server_header)
-
-# Sources
-#shm_src = 'src/shm.c'
-src_server = files('src/server.c')
-#Executable: server
-executable('junowm', src_server,
-  include_directories: inc,
-  dependencies: [wayland_server, wayland_protocols, wlroots]
+wayland_protocols_proto = custom_target('xdg-shell-protocol',
+  input: protocols_server_header / 'stable/xdg-shell/xdg-shell.xml',
+  output: ['xdg-shell-protocol.h', 'xdg-shell-protocol.c'],
+  command: [
+    find_program('wayland-scanner'), 'server-header', '@INPUT@', '@OUTPUT0@',
+    '&&',
+    find_program('wayland-scanner'), 'private-code', '@INPUT@', '@OUTPUT1@'
+  ]
 )
 
-#src_client = files('src/client.c')
-#executable('testclient', src_client, dependencies: [wayland_client])
 
-
-#Executable: client
-#executable('testclient',['src/client.c', shm_src], dependencies: [wayland_client])
+# Sources
+executable('junowm', 
+  sources: ['src/server.c', wayland_protocols_proto],
+  include_directories: include_directories('.'),
+  dependencies: [wayland_protocols, wlroots, wayland_server]
+)

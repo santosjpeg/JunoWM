@@ -21,6 +21,7 @@
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
 #include <xkbcommon/xkbcommon.h>
 
@@ -43,6 +44,9 @@ struct jwm_server {
 
   struct wl_list outputs;
   struct wl_listener new_output;
+
+  struct wlr_xdg_shell *xdg_shell;
+  struct wl_listener new_xdg_surface;
 };
 
 struct jwm_output {
@@ -53,6 +57,13 @@ struct jwm_output {
   struct wl_listener request_state;
   struct wl_listener destroy;
 };
+
+static void handle_new_xdg_surface(struct wl_listener *listener, void *data) {
+  struct jwm_server *output =
+      wl_container_of(listener, output, new_xdg_surface);
+
+  struct wlr_xdg_surface *xdg_surface = data;
+}
 
 static void output_frame(struct wl_listener *listener, void *data) {
   struct jwm_output *output = wl_container_of(listener, output, frame);
@@ -176,8 +187,8 @@ int main(int argc, char **argv) {
   /* Compositor: the meta interface that allocates surfaces onto a display.
    * Recall that a compositor is a piece of software to draw application windows
    * onto a given output.*/
-  // wlr_compositor_create(server.wl_display, 5, server.renderer);
-  // wlr_log(WLR_INFO, "[+] init. compositor success");
+  wlr_compositor_create(server.wl_display, 5, server.renderer);
+  wlr_log(WLR_INFO, "[+] init. compositor success");
 
   /* Configure a listener to notify when a new output is detected (e.g., when a
    * new monitor is plugged in)*/
@@ -192,6 +203,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  server.xdg_shell = wlr_xdg_shell_create(server.wl_display, 3);
+  server.new_xdg_surface.notify = handle_new_xdg_surface;
+  wl_signal_add(&server.xdg_shell->events.new_surface, &server.new_xdg_surface);
+
+  /* Initializes socket name for the wl_display. Convenient if you are current
+   * desktop is already running Wayland protocol */
   const char *socket = wl_display_add_socket_auto(server.wl_display);
   if (!socket) {
     wlr_log(WLR_ERROR, "[-] Failed to create UNIX socket");

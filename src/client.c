@@ -1,9 +1,9 @@
-#define _POSIX_C_SOURCE 200112L
 #include "xdg-shell-client-protocol.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -140,13 +140,17 @@ static void registry_global(void *data, struct wl_registry *wl_registry,
   struct client_state *state = data;
   if (strcmp(interface, wl_shm_interface.name) == 0) {
     state->wl_shm = wl_registry_bind(wl_registry, name, &wl_shm_interface, 1);
+    fprintf(stderr, "[+] successfully bind to shm interface\n");
   } else if (strcmp(interface, wl_compositor_interface.name) == 0) {
     state->wl_compositor =
         wl_registry_bind(wl_registry, name, &wl_compositor_interface, 4);
+    fprintf(stderr, "[+] successfully bind to compositor interface\n");
   } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
     state->xdg_wm_base =
         wl_registry_bind(wl_registry, name, &xdg_wm_base_interface, 1);
     xdg_wm_base_add_listener(state->xdg_wm_base, &xdg_wm_base_listener, state);
+    fprintf(stderr, "[+] successfully bind to xdg_wm interface (xdg-shell "
+                    "compatibility confirmed)\n");
   }
 }
 
