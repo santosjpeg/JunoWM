@@ -18,12 +18,16 @@ inc = include_directories('include', protocols_server_header)
 
 # Sources
 #shm_src = 'src/shm.c'
-src = files('src/server.c', 'src/utils.c')
+src_server = files('src/server.c')
 #Executable: server
-executable('junowm', src,
+executable('junowm', src_server,
   include_directories: inc,
   dependencies: [wayland_server, wayland_protocols, wlroots]
 )
+
+#src_client = files('src/client.c')
+#executable('testclient', src_client, dependencies: [wayland_client])
+
 
 #Executable: client
 #executable('testclient',['src/client.c', shm_src], dependencies: [wayland_client])
